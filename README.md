@@ -6,17 +6,40 @@ Klipper modules for various nevermore max air quality sensors
 
 ### Sample Config
 
-#### Manual Installation
+Add to `printer.cfg`
+
+```
+[temperature_sensor chamber]
+sensor_type: BME280
+i2c_bus: i2c0e
+i2c_address: 119
+
+[sgp30 chamber]
+i2c_bus: i2c0e
+temperature_sensor: bme280 chamber
+csv_filename: /tmp/sgp30_log.csv
+
+[temperature_sensor exhaust]
+sensor_type: AHT21
+i2c_bus: i2c0e
+
+[ens160 exhaust]
+i2c_bus: i2c0e
+temperature_sensor: aht21 exhaust
+csv_filename: /tmp/ens160_log.csv
+```
+
+#### Installation
 
 Clone this repo and run the `install_klipper.sh` script. Example:
 
 ```bash
-cd /home/pi
+cd ~
 git clone https://github.com/nknotts/klipper-nevermore-max.git
-./nevermore-max-controller/install_klipper.sh
+./klipper-nevermore-max/install_klipper.sh
 ```
 
-It's safe to execute the install script multiple times.
+It is safe to execute the install script multiple times.
 
 More on this in the [Moonraker Update Manager](#moonraker-update-manager) section.
 
