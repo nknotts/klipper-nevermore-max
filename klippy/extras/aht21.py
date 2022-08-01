@@ -16,7 +16,7 @@ class AHT21:
         self.i2c = bus.MCU_I2C_from_config(
             config, default_addr=AHTX0_I2CADDR_DEFAULT, default_speed=400000)
         self.report_time = config.getfloat(
-            "report_time", default=1.0, minval=1.0)
+            "report_time", default=2.0, minval=2.0)
         self.sample_timer = self.reactor.register_timer(self._sample_aht21)
         self.aht21 = None
 
