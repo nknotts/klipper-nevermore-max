@@ -17,7 +17,7 @@ i2c_address: 119
 [sgp30 chamber]
 i2c_bus: i2c0e
 temperature_sensor: bme280 chamber
-csv_filename: /tmp/sgp30_log.csv
+csv_basename: /tmp/sgp30_chamber
 
 [temperature_sensor exhaust]
 sensor_type: AHT21
@@ -26,7 +26,7 @@ i2c_bus: i2c0e
 [ens160 exhaust]
 i2c_bus: i2c0e
 temperature_sensor: aht21 exhaust
-csv_filename: /tmp/ens160_log.csv
+csv_basename: /tmp/ens160_exhaust
 ```
 
 #### Installation
