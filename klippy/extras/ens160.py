@@ -10,6 +10,7 @@ import time
 import struct
 import threading
 import queue
+import datetime
 
 from . import bus
 
@@ -27,7 +28,7 @@ class ENS160:
         self.syslog_time = config.getfloat(
             "syslog_time", default=self.reactor.NEVER)
         self.syslog_last_updated = self.reactor.NOW
-        self.csv_filename = config.get("csv_filename", default=None)
+        self.csv_basename = config.get("csv_basename", default=None)
         self.csv_log_queue = queue.Queue()
         self.eCO2 = self.TVOC = None
         self.ens160 = None
@@ -36,7 +37,7 @@ class ENS160:
             "temperature_sensor", default=None)
         self.temperature_key = config.get(
             "temperature_key", default="temperature")
-        self.temperature_initial = config.get(
+        self.temperature_initial = config.getfloat(
             "temperature_initial", default=None)  # units deg C
         self.temperature_last = None
         self.humidity_sensor = None
@@ -60,6 +61,38 @@ class ENS160:
                 "ens160 {}: must specify either 'humidity_sensor'"
                 " or 'humidity_initial'".format(self.name))
 
+        gcode = self.printer.lookup_object('gcode')
+        gcode.register_mux_command("AIR_QUALITY_CSV_LOGGING_START",
+                                   "NAME",
+                                   self.name,
+                                   self.cmd_CSV_LOGGING_START,
+                                   desc="Start air quality csv logging")
+        gcode.register_mux_command("AIR_QUALITY_CSV_LOGGING_STOP",
+                                   "NAME",
+                                   self.name,
+                                   self.cmd_CSV_LOGGING_STOP,
+                                   desc="Stop air quality csv logging")
+
+    def cmd_CSV_LOGGING_START(self, gcmd):
+        if self.csv_basename:
+            self.csv_log_queue.put_nowait({
+                "type": "start",
+                "gcmd": gcmd
+            })
+        else:
+            gcmd.respond_info("ens160 {}: csv_basename not specified"
+                              .format(self.name))
+
+    def cmd_CSV_LOGGING_STOP(self, gcmd):
+        if self.csv_basename:
+            self.csv_log_queue.put_nowait({
+                "type": "stop",
+                "gcmd": gcmd
+            })
+        else:
+            gcmd.respond_info("ens160 {}: csv_basename not specified"
+                              .format(self.name))
+
     def handle_connect(self):
         self.ens160 = DFRobot_ENS160(self.i2c, self.reactor)
 
@@ -71,9 +104,10 @@ class ENS160:
             self.humidity_sensor = self.printer.lookup_object(
                 self.humidity_sensor_name)
 
-        if self.csv_filename:
+        if self.csv_basename:
             threading.Thread(target=csv_logger, args=(
-                self.csv_filename, self.csv_log_queue)).start()
+                self.name, self.csv_basename,
+                self.reactor, self.csv_log_queue)).start()
 
         self.reactor.update_timer(self.sample_timer, self.reactor.NOW)
 
@@ -81,16 +115,14 @@ class ENS160:
         measured_time = self.reactor.monotonic()
 
         # update ens160 temp/humidity to aid with measurement compensation
-        if self.temperature_sensor:
-            temperature_status = self.temperature_sensor.get_status(eventtime)
-            tempC = temperature_status[self.temperature_key]
-        else:
-            tempC = self.temperature_initial
-        if self.humidity_sensor:
-            humidity_status = self.humidity_sensor.get_status(eventtime)
-            humidity = humidity_status[self.humidity_key]
-        else:
-            humidity = self.humidity_initial
+        temperature_status = self.temperature_sensor.get_status(eventtime) \
+            if self.temperature_sensor \
+            else {self.temperature_key: self.temperature_initial}
+        tempC = temperature_status[self.temperature_key]
+        humidity_status = self.humidity_sensor.get_status(eventtime) \
+            if self.humidity_sensor \
+            else {self.humidity_key: self.humidity_initial}
+        humidity = humidity_status[self.humidity_key]
 
         try:
             # require both temperature/humidity to update ens160 compensation
@@ -114,15 +146,16 @@ class ENS160:
                 self.syslog_last_updated = now
 
         # log measurement to csv
-        if self.csv_filename:
+        if self.csv_basename:
             self.csv_log_queue.put_nowait({
+                "type": "update",
                 "monotonic": now,
                 "status": status,
                 "aqi": aqi,
                 "eco2": self.eCO2,
                 "tvoc": self.TVOC,
-                "temperature": tempC,
-                "humidity": humidity
+                "temperature": temperature_status,
+                "humidity": humidity_status
             })
 
         # schedule next loop
@@ -135,20 +168,60 @@ class ENS160:
         }
 
 
-def csv_logger(filename, data_queue):
-    with open(filename, 'a') as csvfile:
-        csvwriter = csv.writer(csvfile)
-        csvwriter.writerow(['unix_time', 'monotonic_time', 'Status', 'AQI',
-                           'ECO2', 'TVOC', "TemperatureC", "HumidityRH"])
+def csv_logger(name, basename, reactor, data_queue):
+    try:
+        def gcmd_result(gcmd, val):
+            reactor.register_async_callback((lambda e: gcmd.respond_info(val)))
 
+        csvfile = None
+        csvwriter = None
         while True:
             item = data_queue.get()
-            csvwriter.writerow(
-                [time.time(), item['monotonic'], item['status'], item['aqi'],
-                 item['eco2'], item['tvoc'], item['temperature'],
-                 item['humidity']])
-            csvfile.flush()
+            item_type = item['type']
+            if item_type == "start":
+                if not csvfile:
+                    filename = basename + datetime.datetime.now().strftime(
+                        "_%Y-%m-%d_%H-%M-%S.csv")
+                    csvfile = open(filename, 'w')
+                    gcmd_result(item['gcmd'],
+                                "ens160 {}: csv logging started '{}'"
+                                .format(name, filename))
+                else:
+                    gcmd_result(item['gcmd'],
+                                "ens160 {}: csv logging already started"
+                                .format(name))
+            elif item_type == "stop":
+                if csvfile:
+                    csvfile.close()
+                    csvfile = None
+                    csvwriter = None
+                    gcmd_result(item['gcmd'],
+                                "ens160 {}: csv logging stopped".format(name))
+                else:
+                    gcmd_result(item['gcmd'],
+                                "ens160 {}: csv logging already stopped"
+                                .format(name))
+            elif item_type == "update" and csvfile:
+                t = item['temperature']
+                h = item['humidity']
+
+                if not csvwriter:
+                    csvwriter = csv.writer(csvfile)
+                    row = ['unix_time', 'monotonic_time', 'AQI', 'ECO2', 'TVOC']
+                    row.extend("temperature_{}".format(x) for x in sorted(t))
+                    row.extend("humidity_{}".format(x) for x in sorted(h))
+                    csvwriter.writerow(row)
+
+                row = [time.time(), item['monotonic'], item['aqi'],
+                       item['eco2'], item['tvoc']]
+                row.extend(t[k] for k in sorted(t))
+                row.extend(h[k] for k in sorted(h))
+                csvwriter.writerow(row)
+                csvfile.flush()
+
             data_queue.task_done()
+    except Exception as err:
+        logging.exception("ens160 {}: csv error - {}".format(name, err))
 
 
 # The DFRobot_ENS160 class is heavily inspired/taken from
