@@ -9,6 +9,8 @@ import csv
 import time
 import threading
 import queue
+import datetime
+
 import adafruit_sgp40
 
 from .. import bus
@@ -27,7 +29,7 @@ class SGP40:
         self.syslog_time = config.getfloat(
             "syslog_time", default=self.reactor.NEVER)
         self.syslog_last_updated = self.reactor.NOW
-        self.csv_filename = config.get("csv_filename", default=None)
+        self.csv_basename = config.get("csv_basename", default=None)
         self.csv_log_queue = queue.Queue()
         self.air_quality = None
         self.sgp40 = None
@@ -36,7 +38,7 @@ class SGP40:
             "temperature_sensor", default=None)
         self.temperature_key = config.get(
             "temperature_key", default="temperature")
-        self.temperature_initial = config.get(
+        self.temperature_initial = config.getfloat(
             "temperature_initial", default=None)  # units deg C
         self.temperature_last = None
         self.humidity_sensor = None
@@ -60,6 +62,38 @@ class SGP40:
                 "sgp40 {}: must specify either 'humidity_sensor'"
                 " or 'humidity_initial'".format(self.name))
 
+        gcode = self.printer.lookup_object('gcode')
+        gcode.register_mux_command("AIR_QUALITY_CSV_LOGGING_START",
+                                   "NAME",
+                                   self.name,
+                                   self.cmd_CSV_LOGGING_START,
+                                   desc="Start air quality csv logging")
+        gcode.register_mux_command("AIR_QUALITY_CSV_LOGGING_STOP",
+                                   "NAME",
+                                   self.name,
+                                   self.cmd_CSV_LOGGING_STOP,
+                                   desc="Stop air quality csv logging")
+
+    def cmd_CSV_LOGGING_START(self, gcmd):
+        if self.csv_basename:
+            self.csv_log_queue.put_nowait({
+                "type": "start",
+                "gcmd": gcmd
+            })
+        else:
+            gcmd.respond_info("sgp40 {}: csv_basename not specified"
+                              .format(self.name))
+
+    def cmd_CSV_LOGGING_STOP(self, gcmd):
+        if self.csv_basename:
+            self.csv_log_queue.put_nowait({
+                "type": "stop",
+                "gcmd": gcmd
+            })
+        else:
+            gcmd.respond_info("sgp40 {}: csv_basename not specified"
+                              .format(self.name))
+
     def handle_connect(self):
         self.sgp40 = adafruit_sgp40.Adafruit_SGP40(self.i2c, self.reactor)
 
@@ -71,9 +105,10 @@ class SGP40:
             self.humidity_sensor = self.printer.lookup_object(
                 self.humidity_sensor_name)
 
-        if self.csv_filename:
+        if self.csv_basename:
             threading.Thread(target=csv_logger, args=(
-                self.csv_filename, self.csv_log_queue)).start()
+                self.name, self.csv_basename,
+                self.reactor, self.csv_log_queue)).start()
 
         self.reactor.update_timer(self.sample_timer, self.reactor.NOW)
 
@@ -81,16 +116,14 @@ class SGP40:
         measured_time = self.reactor.monotonic()
 
         # update sgp40 temp/humidity to aid with measurement compensation
-        if self.temperature_sensor:
-            temperature_status = self.temperature_sensor.get_status(eventtime)
-            tempC = temperature_status[self.temperature_key]
-        else:
-            tempC = self.temperature_initial
-        if self.humidity_sensor:
-            humidity_status = self.humidity_sensor.get_status(eventtime)
-            humidity = humidity_status[self.humidity_key]
-        else:
-            humidity = self.humidity_initial
+        temperature_status = self.temperature_sensor.get_status(eventtime) \
+            if self.temperature_sensor \
+            else {self.temperature_key: self.temperature_initial}
+        tempC = temperature_status[self.temperature_key]
+        humidity_status = self.humidity_sensor.get_status(eventtime) \
+            if self.humidity_sensor \
+            else {self.humidity_key: self.humidity_initial}
+        humidity = humidity_status[self.humidity_key]
 
         try:
             if tempC and humidity:
@@ -114,12 +147,13 @@ class SGP40:
                 self.syslog_last_updated = now
 
         # log measurement to csv
-        if self.csv_filename:
+        if self.csv_basename:
             self.csv_log_queue.put_nowait({
+                "type": "update",
                 "monotonic": now,
                 "air_quality": self.air_quality,
-                "temperature": tempC,
-                "humidity": humidity
+                "temperature": temperature_status,
+                "humidity": humidity_status
             })
 
         # schedule next loop
@@ -131,19 +165,59 @@ class SGP40:
         }
 
 
-def csv_logger(filename, data_queue):
-    with open(filename, 'a') as csvfile:
-        csvwriter = csv.writer(csvfile)
-        csvwriter.writerow(['unix_time', 'monotonic_time', 'AirQuality',
-                            "TemperatureC", "HumidityRH"])
+def csv_logger(name, basename, reactor, data_queue):
+    try:
+        def gcmd_result(gcmd, val):
+            reactor.register_async_callback((lambda e: gcmd.respond_info(val)))
 
+        csvfile = None
+        csvwriter = None
         while True:
             item = data_queue.get()
-            csvwriter.writerow(
-                [time.time(), item['monotonic'], item['air_quality'],
-                 item['temperature'], item['humidity']])
-            csvfile.flush()
+            item_type = item['type']
+            if item_type == "start":
+                if not csvfile:
+                    filename = basename + datetime.datetime.now().strftime(
+                        "_%Y-%m-%d_%H-%M-%S.csv")
+                    csvfile = open(filename, 'w')
+                    gcmd_result(item['gcmd'],
+                                "sgp40 {}: csv logging started '{}'"
+                                .format(name, filename))
+                else:
+                    gcmd_result(item['gcmd'],
+                                "sgp40 {}: csv logging already started"
+                                .format(name))
+            elif item_type == "stop":
+                if csvfile:
+                    csvfile.close()
+                    csvfile = None
+                    csvwriter = None
+                    gcmd_result(item['gcmd'],
+                                "sgp40 {}: csv logging stopped".format(name))
+                else:
+                    gcmd_result(item['gcmd'],
+                                "sgp40 {}: csv logging already stopped"
+                                .format(name))
+            elif item_type == "update" and csvfile:
+                t = item['temperature']
+                h = item['humidity']
+
+                if not csvwriter:
+                    csvwriter = csv.writer(csvfile)
+                    row = ['unix_time', 'monotonic_time', 'air_quality']
+                    row.extend("temperature_{}".format(x) for x in sorted(t))
+                    row.extend("humidity_{}".format(x) for x in sorted(h))
+                    csvwriter.writerow(row)
+
+                row = [time.time(), item['monotonic'], item['air_quality']]
+                row.extend(t[k] for k in sorted(t))
+                row.extend(h[k] for k in sorted(h))
+                csvwriter.writerow(row)
+                csvfile.flush()
+
             data_queue.task_done()
+    except Exception as err:
+        logging.exception("sgp40 {}: csv error - {}".format(name, err))
 
 
 def load_config_prefix(config):
