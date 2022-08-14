@@ -289,7 +289,7 @@ class Adafruit_SGP40:
         # recycle buffer for read/write w/length
         replybuffer = bytearray(replylen)
 
-        params = self.i2c_read([], replylen)
+        params = self._i2c.i2c_read([], replylen)
         replybuffer = params['response']
 
         for i in range(0, replylen, 3):
