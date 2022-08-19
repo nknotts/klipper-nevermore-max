@@ -9,6 +9,8 @@ Klipper modules for various nevermore max air quality sensors
 Add to `printer.cfg`
 
 ```
+[aht21]
+
 [temperature_sensor chamber]
 sensor_type: BME280
 i2c_bus: i2c0e
@@ -28,6 +30,9 @@ i2c_bus: i2c0e
 temperature_sensor: aht21 exhaust
 csv_basename: /tmp/ens160_exhaust
 ```
+
+>:point_up: **NOTE:** To use the AHT21, you must add `[aht21]` to `printer.cfg`
+> somewhere before the first `[temperature_sensor]` section with `sensor_type: AHT21`
 
 #### Installation
 

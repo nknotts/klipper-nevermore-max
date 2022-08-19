@@ -29,13 +29,6 @@ link_extension()
     ln -sf "${SRCDIR}/klippy/extras/ens160.py" "${KLIPPER_PATH}/klippy/extras/"
     ln -sf "${SRCDIR}/klippy/extras/sgp30.py"  "${KLIPPER_PATH}/klippy/extras/"
     ln -sf "${SRCDIR}/klippy/extras/sgp40"     "${KLIPPER_PATH}/klippy/extras/"
-
-    if grep -q "aht21" "${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg"; then
-        echo "temperature_sensors.cfg already set"
-    else
-        echo "updating temperature_sensors.cfg"
-        printf "\n[aht21]\n" >> "${KLIPPER_PATH}/klippy/extras/temperature_sensors.cfg"
-    fi
 }
 
 # Step 3: restarting Klipper
