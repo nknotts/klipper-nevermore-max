@@ -148,7 +148,7 @@ class Adafruit_SGP40:
         self_test = self._read_word_from_command(delay_ms=250)
         if self_test[0] != 0xD400:
             raise RuntimeError("Self test failed")
-        self._reset()
+        #self._reset()
 
     def _reset(self):
         # This is a general call Reset. Several sensors may see this and it doesn't appear to
@@ -290,7 +290,7 @@ class Adafruit_SGP40:
         replybuffer = bytearray(replylen)
 
         params = self._i2c.i2c_read([], replylen)
-        replybuffer = params['response']
+        replybuffer = bytearray(params['response'])
 
         for i in range(0, replylen, 3):
             if not self._check_crc8(replybuffer[i: i + 2], replybuffer[i + 2]):
