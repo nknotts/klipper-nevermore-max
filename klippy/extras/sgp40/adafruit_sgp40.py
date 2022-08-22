@@ -148,7 +148,7 @@ class Adafruit_SGP40:
         self_test = self._read_word_from_command(delay_ms=250)
         if self_test[0] != 0xD400:
             raise RuntimeError("Self test failed")
-        #self._reset()
+        # self._reset()
 
     def _reset(self):
         # This is a general call Reset. Several sensors may see this and it doesn't appear to
@@ -245,21 +245,21 @@ class Adafruit_SGP40:
         :note 00-500, ventilate, purify intensely
         :return int The VOC index measured, ranged from 0 to 500
         """
-        # import/setup algorithm only on use of index
-        # pylint: disable=import-outside-toplevel
-        from voc_algorithm import (
-            VOCAlgorithm,
-        )
-
         if self._voc_algorithm is None:
+            # import/setup algorithm only on use of index
+            # pylint: disable=import-outside-toplevel
+            from voc_algorithm import (
+                VOCAlgorithm,
+            )
+
             self._voc_algorithm = VOCAlgorithm()
             self._voc_algorithm.vocalgorithm_init()
 
         raw = self.measure_raw(temperature, relative_humidity)
         if raw < 0:
-            return -1
+            return -1, -1
         voc_index = self._voc_algorithm.vocalgorithm_process(raw)
-        return voc_index
+        return voc_index, raw
 
     def _read_word_from_command(
         self,

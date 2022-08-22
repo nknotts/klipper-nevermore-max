@@ -32,6 +32,7 @@ class SGP40:
         self.csv_basename = config.get("csv_basename", default=None)
         self.csv_log_queue = queue.Queue()
         self.air_quality = None
+        self.raw_measurement = None
         self.sgp40 = None
         self.temperature_sensor = None
         self.temperature_sensor_name = config.get(
@@ -127,10 +128,12 @@ class SGP40:
 
         try:
             if tempC and humidity:
-                self.air_quality = self.sgp40.measure_index(tempC, humidity)
+                self.air_quality, self.raw_measurement = \
+                    self.sgp40.measure_index(tempC, humidity)
             else:
                 # default temp/humidity
-                self.air_quality = self.sgp40.measure_index()
+                self.air_quality, self.raw_measurement = \
+                    self.sgp40.measure_index()
 
         except Exception as err:
             logging.exception(
@@ -142,8 +145,9 @@ class SGP40:
         now = self.reactor.monotonic()
         if self.syslog_time > 0:
             if now - self.syslog_last_updated > self.syslog_time:
-                logging.info("sgp40 {}: measured - Air Quality: {}"
-                             .format(self.name, self.air_quality))
+                logging.info("sgp40 {}: measured - Air Quality: {}, Raw: {}"
+                             .format(self.name, self.air_quality,
+                                     self.raw_measurement))
                 self.syslog_last_updated = now
 
         # log measurement to csv
@@ -152,6 +156,7 @@ class SGP40:
                 "type": "update",
                 "monotonic": now,
                 "air_quality": self.air_quality,
+                "raw": self.raw_measurement,
                 "temperature": temperature_status,
                 "humidity": humidity_status
             })
@@ -162,6 +167,7 @@ class SGP40:
     def get_status(self, eventtime):
         return {
             'air_quality': self.air_quality,
+            'raw': self.raw_measurement,
         }
 
 
@@ -204,12 +210,13 @@ def csv_logger(name, basename, reactor, data_queue):
 
                 if not csvwriter:
                     csvwriter = csv.writer(csvfile)
-                    row = ['unix_time', 'monotonic_time', 'air_quality']
+                    row = ['unix_time', 'monotonic_time', 'air_quality', 'raw']
                     row.extend("temperature_{}".format(x) for x in sorted(t))
                     row.extend("humidity_{}".format(x) for x in sorted(h))
                     csvwriter.writerow(row)
 
-                row = [time.time(), item['monotonic'], item['air_quality']]
+                row = [time.time(), item['monotonic'],
+                       item['air_quality'], item['raw']]
                 row.extend(t[k] for k in sorted(t))
                 row.extend(h[k] for k in sorted(h))
                 csvwriter.writerow(row)
