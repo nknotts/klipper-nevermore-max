@@ -33,7 +33,7 @@ class SGP30:
         self.csv_basename = config.get("csv_basename", default=None)
         self.csv_log_queue = queue.Queue()
         self.mcu = self.i2c.get_mcu()
-        self.eCO2 = self.TVOC = None
+        self.eCO2 = self.TVOC = self.H2Raw = self.EthanolRaw = None
         self.sgp30 = None
         cfgname = self.printer.get_start_args()['config_file']
         self.baseline_timer = None
@@ -217,6 +217,7 @@ class SGP30:
 
             # perform measurement
             self.eCO2, self.TVOC = self.sgp30.iaq_measure()
+            self.H2Raw, self.EthanolRaw = self.sgp30.raw_measure()
         except Exception as err:
             logging.exception("sgp30 {}: Error reading data - {}"
                               .format(self.name, err))
@@ -238,6 +239,8 @@ class SGP30:
                 "monotonic": now,
                 "eco2": self.eCO2,
                 "tvoc": self.TVOC,
+                "h2raw": self.H2Raw,
+                "ethanolraw": self.EthanolRaw,
                 "temperature": temperature_status,
                 "humidity": humidity_status
             })
@@ -249,6 +252,8 @@ class SGP30:
         return {
             'eco2': self.eCO2,
             'tvoc': self.TVOC,
+            'h2raw': self.H2Raw,
+            'ethanolraw': self.EthanolRaw,
         }
 
 
@@ -323,13 +328,14 @@ def csv_logger(name, basename, reactor, data_queue):
 
                 if not csvwriter:
                     csvwriter = csv.writer(csvfile)
-                    row = ['unix_time', 'monotonic_time', 'ECO2', 'TVOC']
+                    row = ['unix_time', 'monotonic_time', 'ECO2',
+                           'TVOC', 'H2Raw', 'EthanolRaw']
                     row.extend("temperature_{}".format(x) for x in sorted(t))
                     row.extend("humidity_{}".format(x) for x in sorted(h))
                     csvwriter.writerow(row)
 
-                row = [time.time(), item['monotonic'],
-                       item['eco2'], item['tvoc']]
+                row = [time.time(), item['monotonic'], item['eco2'],
+                       item['tvoc'], item['h2raw'], item['ethanolraw']]
                 row.extend(t[k] for k in sorted(t))
                 row.extend(h[k] for k in sorted(h))
                 csvwriter.writerow(row)
