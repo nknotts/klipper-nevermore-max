@@ -131,6 +131,7 @@ class ENS160:
 
             # perform measurement
             status, aqi, self.TVOC, self.eCO2 = self.ens160.air_quality()
+            hydrogen, acetone, carbon_monoxide, toluene = self.ens160.raw()
         except Exception as err:
             logging.exception(
                 "ens160 {}: Error reading data - {}".format(self.name, err))
@@ -154,6 +155,10 @@ class ENS160:
                 "aqi": aqi,
                 "eco2": self.eCO2,
                 "tvoc": self.TVOC,
+                "hydrogenRaw": hydrogen,
+                "acetoneRaw": acetone,
+                "carbonMonoxideRaw": carbon_monoxide,
+                "tolueneRaw": toluene,
                 "temperature": temperature_status,
                 "humidity": humidity_status
             })
@@ -207,13 +212,17 @@ def csv_logger(name, basename, reactor, data_queue):
 
                 if not csvwriter:
                     csvwriter = csv.writer(csvfile)
-                    row = ['unix_time', 'monotonic_time', 'AQI', 'ECO2', 'TVOC']
+                    row = ['unix_time', 'monotonic_time', 'AQI', 'ECO2', 'TVOC',
+                           'hydrogen_raw', 'acetone_raw', 'carbon_monoxide_raw',
+                           'toluene_raw']
                     row.extend("temperature_{}".format(x) for x in sorted(t))
                     row.extend("humidity_{}".format(x) for x in sorted(h))
                     csvwriter.writerow(row)
 
                 row = [time.time(), item['monotonic'], item['aqi'],
-                       item['eco2'], item['tvoc']]
+                       item['eco2'], item['tvoc'], item['hydrogenRaw'],
+                       item['acetoneRaw'], item['carbonMonoxideRaw'],
+                       item['tolueneRaw']]
                 row.extend(t[k] for k in sorted(t))
                 row.extend(h[k] for k in sorted(h))
                 csvwriter.writerow(row)
@@ -324,6 +333,12 @@ class DFRobot_ENS160:
         temp = int((temperature_C + 273.15) * 64)
         rh = int(humidity_rh * 512)
         self._i2c.i2c_write(struct.pack("<BHH", ENS160_TEMP_IN_REG, temp, rh))
+
+    def raw(self):
+        params = self._i2c.i2c_read([ENS160_GPR_READ_REG], 8)
+        # hydrogen, acetone, carbon monoxide, toluene
+        vals = struct.unpack('<HHHH', params['response'])
+        return list(int(2.0**(x/2048.0)) for x in vals)
 
 
 def load_config_prefix(config):
